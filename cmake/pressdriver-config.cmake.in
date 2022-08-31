@@ -1,0 +1,54 @@
+# PressDriver CMake config file
+#
+# This file sets the following variables:
+# PressDriver_FOUND - Always TRUE.
+# PressDriver_INCLUDE_DIRS - Directories containing the PressDriver include files.
+# PressDriver_IDL_DIRS - Directories containing the PressDriver IDL files.
+# PressDriver_LIBRARIES - Libraries needed to use PressDriver.
+# PressDriver_DEFINITIONS - Compiler flags for PressDriver.
+# PressDriver_VERSION - The version of PressDriver found.
+# PressDriver_VERSION_MAJOR - The major version of PressDriver found.
+# PressDriver_VERSION_MINOR - The minor version of PressDriver found.
+# PressDriver_VERSION_REVISION - The revision version of PressDriver found.
+# PressDriver_VERSION_CANDIDATE - The candidate version of PressDriver found.
+
+message(STATUS "Found PressDriver-@PROJECT_VERSION@")
+set(PressDriver_FOUND TRUE)
+
+find_package(<dependency> REQUIRED)
+
+#set(PressDriver_INCLUDE_DIRS
+#    "@CMAKE_INSTALL_PREFIX@/include/@PROJECT_NAME_LOWER@-@PROJECT_VERSION_MAJOR@"
+#    ${<dependency>_INCLUDE_DIRS}
+#    )
+#
+#set(PressDriver_IDL_DIRS
+#    "@CMAKE_INSTALL_PREFIX@/include/@PROJECT_NAME_LOWER@-@PROJECT_VERSION_MAJOR@/idl")
+set(PressDriver_INCLUDE_DIRS
+    "@CMAKE_INSTALL_PREFIX@/include/@CPACK_PACKAGE_FILE_NAME@"
+    ${<dependency>_INCLUDE_DIRS}
+    )
+set(PressDriver_IDL_DIRS
+    "@CMAKE_INSTALL_PREFIX@/include/@CPACK_PACKAGE_FILE_NAME@/idl")
+
+
+if(WIN32)
+    set(PressDriver_LIBRARIES
+        "@CMAKE_INSTALL_PREFIX@/@LIB_INSTALL_DIR@/@CMAKE_SHARED_LIBRARY_PREFIX@@PROJECT_NAME_LOWER@@CMAKE_STATIC_LIBRARY_SUFFIX@"
+        ${<dependency>_LIBRARIES}
+        )
+else(WIN32)
+    set(PressDriver_LIBRARIES
+        "@CMAKE_INSTALL_PREFIX@/@LIB_INSTALL_DIR@/@CMAKE_SHARED_LIBRARY_PREFIX@@PROJECT_NAME_LOWER@@CMAKE_SHARED_LIBRARY_SUFFIX@"
+        ${<dependency>_LIBRARIES}
+        )
+endif(WIN32)
+
+set(PressDriver_DEFINITIONS ${<dependency>_DEFINITIONS})
+
+set(PressDriver_VERSION @PROJECT_VERSION@)
+set(PressDriver_VERSION_MAJOR @PROJECT_VERSION_MAJOR@)
+set(PressDriver_VERSION_MINOR @PROJECT_VERSION_MINOR@)
+set(PressDriver_VERSION_REVISION @PROJECT_VERSION_REVISION@)
+set(PressDriver_VERSION_CANDIDATE @PROJECT_VERSION_CANDIDATE@)
+
