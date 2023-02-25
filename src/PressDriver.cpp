@@ -15,6 +15,7 @@
 #include <iostream>
 #include <cmath>
 #include <conio.h>
+#include <time.h>
 
  // ESCのキーコード
 #define ESC 27 //0x1B
@@ -71,7 +72,10 @@ enum {
 	NOWPOS_BASE,
 	RELOAD_SETTING,
 	FULL_AUTO,
-	TIME_BLT
+	TIME_BLT,
+	NOWAIT_BLT,
+	SAME_POWER,
+	DEPTH_LOAD
 };
 
 // Module specification
@@ -238,16 +242,21 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 		cout << RELEASE_FORCE << ":圧縮解放モード" << endl;
 		cout << NOWPOS_BASE << ":現在地を基準点に変更" << endl;
 		cout << RELOAD_SETTING << ":設定ファイル再読み込み" << endl;
-		cout << FULL_AUTO << ":フルオート(入力値:ｎ[g]毎)" << endl;
-		cout << TIME_BLT << ":BLTouch時間毎(入力値:ｎ[s]待機)" << endl;
+		cout << FULL_AUTO << ":フルオート(入力値:最終荷重ｎ[g])" << endl;
+		cout << TIME_BLT << ":BLTouch時間毎測定（欠陥）(入力値:ｎ[s]待機)" << endl;
+		cout << NOWAIT_BLT << ":BLTouch連続" << endl;
+		cout << SAME_POWER << ":同じ力での圧迫・計測を繰り返す(入力値:n[g])" << endl;
+		cout << DEPTH_LOAD << ":深さ指定し、動作中の最大圧迫力を測定。(入力値:[mm])" << endl;
 
 		cout << ">> モード選択：";
 		cin >> mode;
 
-		if (mode == NOW_POS || mode == BASE_SET || mode == BLTOUCH_POS || mode == RELEASE_FORCE || mode == NOWPOS_BASE || mode == RELOAD_SETTING) {
+		if (mode == NOW_POS || mode == BASE_SET || mode == BLTOUCH_POS || mode == RELEASE_FORCE ||
+			mode == NOWPOS_BASE || mode == RELOAD_SETTING || mode == NOWAIT_BLT) {
 			slcted_mode = true;
 		}
-		else if (mode == ABSOLUTE_POS || mode == RELATIVE_POS || mode == BASE_RLTPOS || mode == LOAD_POS || mode == FULL_AUTO || mode == TIME_BLT) {
+		else if (mode == ABSOLUTE_POS || mode == RELATIVE_POS || mode == BASE_RLTPOS || mode == LOAD_POS ||
+				 mode == FULL_AUTO || mode == TIME_BLT || mode == SAME_POWER || mode == DEPTH_LOAD) {
 			cout << "指令値(位置か重さ)：";
 			cin >> orderval;
 			slcted_mode = true;
@@ -257,7 +266,7 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 	else {
 		cout << "選択モード：" << mode << endl;
 		//位置取得
-		if (mode == 0) {
+		if (mode == NOW_POS) {
 			pos = step2mm(mot.readPulse());
 			cout << "現在位置：" << pos << " [mm]" << endl;
 		}
@@ -331,7 +340,7 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 			// BLTouch起動
 			m_BLTon.data = true;
 			m_BLTonOut.write();
-			Sleep(500);
+			Sleep(1500);
 			// モータ移動
 			mot.directReference(0, mm2step(touch_speed), mm2step(touch_speed) * 100000, mm2step(touch_speed) * 100000000, SPEED_CONTROL, 0);
 			mot.rotate(SPEED_CONTROL, 0);
@@ -360,7 +369,7 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 			// BLTouch起動
 			m_BLTon.data = true;
 			m_BLTonOut.write();
-			Sleep(500);
+			Sleep(1500);
 			double tmp = base_zero - 1;
 			RANGE_CHECK(tmp, pos_min, pos_max);
 			mot.directReference(mm2step(tmp), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
@@ -529,7 +538,7 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 						m_posload.data[LOAD] = round(m_load.data);
 						m_posloadOut.write();
 						std::printf("\nPOS:%.1f		LOAD:%.1f\n", step2mm(mot.readPulse()) - dist_tips, m_load.data);
-						Sleep(time_pressing);
+						Sleep(time_pressing * 1000);
 					}
 					else break;
 				}
@@ -553,7 +562,7 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 					m_BLTon.data = true;
 					m_BLTonOut.write();
 					m_reoffsetOut.write();
-					Sleep(time_release*1000);
+					Sleep(time_release * 1000);
 					// モータ移動
 					mot.directReference(0, mm2step(touch_speed), mm2step(touch_speed) * 100000, mm2step(touch_speed) * 100000000, SPEED_CONTROL, 0);
 					mot.rotate(SPEED_CONTROL, 0);
@@ -626,6 +635,258 @@ RTC::ReturnCode_t PressDriver::onExecute(RTC::UniqueId ec_id)
 				m_posload.data[LOAD] = -404;
 				m_posloadOut.write();
 			}
+		}
+
+		if (mode == NOWAIT_BLT) {
+			double start_t = clock();
+			// 基準位置のちょい前まで移動
+			double back = base_zero - 1;
+			RANGE_CHECK(back, pos_min, pos_max);
+			mot.directReference(mm2step(back), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+			mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+			mot.driverInputCommand(FLAG_RESET);
+			while (fabs(step2mm(mot.readPulse()) - back) > 0.05f) {
+				if (m_emgIn.isNew()) {
+					while (!m_emgIn.isEmpty()) m_emgIn.read();
+					if (m_emg.data) mot.stop();
+					slcted_mode = false;
+				}
+			}
+			Sleep(100);
+			// ここからループ
+			double tgt_blt_pos = base_zero;
+			while (!kbhit() || (getch() != ESC)) 
+			{
+				
+				double tmp = tgt_blt_pos - 5;
+				RANGE_CHECK(tmp, pos_min, pos_max);
+				mot.directReference(mm2step(tmp), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+				mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+				mot.driverInputCommand(FLAG_RESET);
+				while (fabs(step2mm(mot.readPulse()) - tmp) > 0.05f) {
+					if (m_emgIn.isNew()) {
+						while (!m_emgIn.isEmpty()) m_emgIn.read();
+						if (m_emg.data) mot.stop();
+						slcted_mode = false;
+					}
+				}
+				m_BLTon.data = true;
+				m_BLTonOut.write();
+				Sleep(1500);
+				// モータ移動
+				mot.directReference(0, mm2step(touch_speed), mm2step(touch_speed) * 100000, mm2step(touch_speed) * 100000000, SPEED_CONTROL, 0);
+				mot.rotate(SPEED_CONTROL, 0);
+				// BLTouch接触待機
+				m_touch.data = false;
+				while (!m_touch.data) {
+					if (m_touchIn.isNew())m_touchIn.read();
+					if (m_emgIn.isNew()) {
+						while (!m_emgIn.isEmpty()) m_emgIn.read();
+						if (m_emg.data) mot.stop();
+						slcted_mode = false;
+					}
+				}
+				mot.driverInputCommand(FLAG_RESET);
+				mot.stop();
+				double passed_t = (clock() - start_t) / 1000;
+				Sleep(1);
+				tgt_blt_pos = step2mm(mot.readPulse());
+				m_posload.data[MODE] = NOWAIT_BLT;
+				m_posload.data[POSITION] = tgt_blt_pos;
+				m_posload.data[LOAD] = passed_t;
+				m_posloadOut.write();
+				Sleep(100);
+			}
+		}
+
+		if (mode == SAME_POWER) {
+			// 開始時はロードセルのオフセットをしておく
+			m_reoffsetOut.write();
+			Sleep(5000);
+
+			while (!kbhit() || (getch() != ESC)) {
+				cout << "圧迫開始" << endl;
+				// LOAD_POSからのコピペ
+				while (!m_loadIn.isEmpty()) m_loadIn.read();
+				double g = round(m_load.data); // 1g単位にする
+				if (g < orderval) {
+					double tmp = base_zero - 1;
+					RANGE_CHECK(tmp, pos_min, pos_max);
+					mot.directReference(mm2step(tmp), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+					mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+					mot.driverInputCommand(FLAG_RESET);
+					while (fabs(step2mm(mot.readPulse()) - tmp) > 0.05f) {
+						if (m_emgIn.isNew()) {
+							while (!m_emgIn.isEmpty()) m_emgIn.read();
+							if (m_emg.data) mot.stop();
+							slcted_mode = false;
+						}
+					}
+					Sleep(500);
+					mot.directReference(0, mm2step(push_speed), mm2step(push_speed) * 100000, mm2step(push_speed) * 100000000, SPEED_CONTROL, 0);
+					mot.rotate(SPEED_CONTROL, 0);
+				}
+				while (g < orderval) // 荷重待機
+				{
+					while (!m_loadIn.isEmpty()) m_loadIn.read();
+					g = m_load.data;
+					std::printf("\rLOAD:%.1f	", g);
+					if (m_emgIn.isNew()) {
+						while (!m_emgIn.isEmpty()) m_emgIn.read();
+						if (m_emg.data) mot.stop();
+						slcted_mode = false;
+					}
+				}
+				mot.driverInputCommand(FLAG_RESET);
+				mot.stop();
+				Sleep(1);
+				while (!m_loadIn.isEmpty()) m_loadIn.read();
+				m_posload.data[MODE] = LOAD_POS;
+				m_posload.data[POSITION] = step2mm(mot.readPulse()) - dist_tips;
+				m_posload.data[LOAD] = round(g);
+				m_posloadOut.write();
+				std::printf("\nPOS:%.1f		LOAD:%.1f\n", step2mm(mot.readPulse()) - dist_tips, g);
+				cout << "圧迫状態維持中" << endl;
+				Sleep(time_pressing * 1000);// 潰し維持
+
+				// 膨らみ計測
+				cout << "膨らみ待機" << endl;
+				double tmp = base_zero - 2;
+				RANGE_CHECK(tmp, pos_min, pos_max);
+				mot.directReference(mm2step(tmp), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+				mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+				mot.driverInputCommand(FLAG_RESET);
+				while (fabs(step2mm(mot.readPulse()) - tmp) > 0.05f) {
+					if (m_emgIn.isNew()) {
+						while (!m_emgIn.isEmpty()) m_emgIn.read();
+						if (m_emg.data) mot.stop();
+						slcted_mode = false;
+					}
+				}
+				// BLTouch起動
+				m_BLTon.data = true;
+				m_BLTonOut.write();
+				m_reoffsetOut.write();
+				Sleep(time_release * 1000);
+				cout << "膨らみ計測開始" << endl;
+				// モータ移動
+				mot.directReference(0, mm2step(touch_speed), mm2step(touch_speed) * 100000, mm2step(touch_speed) * 100000000, SPEED_CONTROL, 0);
+				mot.rotate(SPEED_CONTROL, 0);
+				// BLTouch接触待機
+				m_touch.data = false;
+				while (!m_touch.data) {
+					if (m_touchIn.isNew())m_touchIn.read();
+					if (m_emgIn.isNew()) {
+						while (!m_emgIn.isEmpty()) m_emgIn.read();
+						if (m_emg.data) mot.stop();
+						slcted_mode = false;
+					}
+				}
+				mot.driverInputCommand(FLAG_RESET);
+				mot.stop();
+				Sleep(1);
+				m_posload.data[MODE] = BLTOUCH_POS;
+				m_posload.data[POSITION] = step2mm(mot.readPulse());
+				m_posload.data[LOAD] = -404;
+				m_posloadOut.write();
+				cout << "Touch:" << step2mm(mot.readPulse()) << endl;
+				Sleep(100);
+			}
+		}
+
+		if (mode == DEPTH_LOAD) {
+			orderval = base_zero + orderval;
+			RANGE_CHECK(orderval, pos_min, pos_max);
+			mot.directReference(mm2step(orderval), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+			mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+			mot.driverInputCommand(FLAG_RESET);
+			double g = 0.f;
+			while (abs(mot.readPulse() - mm2step(orderval)) > 3); // 目標位置と10ステップ以内になるまで待機
+			{
+				if (m_emgIn.isNew()) {
+					while (!m_emgIn.isEmpty()) m_emgIn.read();
+					if (m_emg.data) mot.stop();
+					slcted_mode = false;
+				}
+
+				if (m_loadIn.isNew()) {// 動作中の負荷計測
+					while (!m_loadIn.isEmpty()) m_loadIn.read();
+					if (m_load.data > g)
+						g = m_load.data;
+					std::printf("\r最大負荷 : %.1f	", g);
+				}
+			}
+			// ｎ秒そのままでの負荷計測
+			int start_t = clock();
+			while (clock() - start_t < time_pressing * 1000) {
+				while (!m_loadIn.isEmpty()) m_loadIn.read();
+				if (m_load.data > g)
+					g = m_load.data;
+				std::printf("\r最大負荷 : %.1f	", g);
+			}
+			m_posload.data[MODE] = LOAD_POS;
+			m_posload.data[POSITION] = step2mm(mot.readPulse());
+			m_posload.data[LOAD] = g;
+			m_posloadOut.write();
+
+			cout << "\n解放" << endl;
+			orderval = base_zero - 5;
+			RANGE_CHECK(orderval, pos_min, pos_max);
+			mot.directReference(mm2step(orderval), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+			mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+			mot.driverInputCommand(FLAG_RESET);
+			while (abs(mot.readPulse() - mm2step(orderval)) > 3); // 目標位置と10ステップ以内になるまで待機
+			{
+				if (m_emgIn.isNew()) {
+					while (!m_emgIn.isEmpty()) m_emgIn.read();
+					if (m_emg.data) mot.stop();
+					slcted_mode = false;
+				}
+			}
+
+			// 膨らみ計測
+			cout << "膨らみ待機" << endl;
+			double tmp = base_zero - 2;
+			RANGE_CHECK(tmp, pos_min, pos_max);
+			mot.directReference(mm2step(tmp), mm2step(speed), mm2step(accel), mm2step(accel), ABSOLUTE_POSITIONING, 0);
+			mot.rotate(BROADCAST, ABSOLUTE_POSITIONING, 0);
+			mot.driverInputCommand(FLAG_RESET);
+			while (fabs(step2mm(mot.readPulse()) - tmp) > 0.05f) {
+				if (m_emgIn.isNew()) {
+					while (!m_emgIn.isEmpty()) m_emgIn.read();
+					if (m_emg.data) mot.stop();
+					slcted_mode = false;
+				}
+			}
+			// BLTouch起動
+			m_BLTon.data = true;
+			m_BLTonOut.write();
+			m_reoffsetOut.write();
+			Sleep(time_release * 1000);
+			cout << "膨らみ計測開始" << endl;
+			// モータ移動
+			mot.directReference(0, mm2step(touch_speed), mm2step(touch_speed) * 100000, mm2step(touch_speed) * 100000000, SPEED_CONTROL, 0);
+			mot.rotate(SPEED_CONTROL, 0);
+			// BLTouch接触待機
+			m_touch.data = false;
+			while (!m_touch.data) {
+				if (m_touchIn.isNew())m_touchIn.read();
+				if (m_emgIn.isNew()) {
+					while (!m_emgIn.isEmpty()) m_emgIn.read();
+					if (m_emg.data) mot.stop();
+					slcted_mode = false;
+				}
+			}
+			mot.driverInputCommand(FLAG_RESET);
+			mot.stop();
+			Sleep(1);
+			m_posload.data[MODE] = BLTOUCH_POS;
+			m_posload.data[POSITION] = step2mm(mot.readPulse());
+			m_posload.data[LOAD] = -404;
+			m_posloadOut.write();
+			cout << "Touch:" << step2mm(mot.readPulse()) << endl;
+			Sleep(100);
+
 		}
 
 
